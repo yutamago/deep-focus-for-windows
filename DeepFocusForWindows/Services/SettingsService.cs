@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Avalonia.Logging;
 using DeepFocusForWindows.Models;
 
 namespace DeepFocusForWindows.Services;
@@ -28,7 +29,16 @@ public class SettingsService : ISettingsService
         }
 
         await using var stream = File.OpenRead(path);
-        Settings = await JsonSerializer.DeserializeAsync<AppSettings>(stream) ?? new AppSettings();
+
+        try
+        {
+            Settings = await JsonSerializer.DeserializeAsync<AppSettings>(stream) ?? new AppSettings();
+        }
+        catch(Exception ex)
+        {
+            Console.WriteLine("Failed to load settings.json: " + ex.Message);
+            Settings = new AppSettings();
+        }
     }
 
     public async Task SaveAsync()

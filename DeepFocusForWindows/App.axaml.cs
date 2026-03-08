@@ -63,13 +63,16 @@ public partial class App : Application
             var windowEnum = _services.GetRequiredService<IWindowEnumerationService>();
             dimming.DimmingLevel = settings.Settings.DimmingLevel;
             var saved = settings.Settings.FocusApps;
-            foreach (var w in windowEnum.GetVisibleWindows())
+            lock (dimming.ExcludedHandles)
             {
-                if (saved.Any(e =>
-                        string.Equals(e.ProcessName, w.ProcessName, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(e.Title, w.Title, StringComparison.OrdinalIgnoreCase)))
+                foreach (var w in windowEnum.GetVisibleWindows())
                 {
-                    dimming.ExcludedHandles.Add(w.Handle);
+                    if (saved.Any(e =>
+                            string.Equals(e.ProcessName, w.ProcessName, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(e.Title, w.Title, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        dimming.ExcludedHandles.Add(w.Handle);
+                    }
                 }
             }
             if (settings.Settings.IsDimmingEnabled)

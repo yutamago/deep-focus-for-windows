@@ -160,9 +160,13 @@ public partial class ConfigurationViewModel : ViewModelBase
     {
         // Push the exact HWNDs so the overlay only reveals those specific windows,
         // not every window belonging to the same wrapper process.
-        _dimming.ExcludedHandles.Clear();
-        foreach (var w in AvailableWindows.Where(x => x.IsSelected))
-            _dimming.ExcludedHandles.Add(w.Handle);
+        // Lock so the background region thread sees a consistent snapshot.
+        lock (_dimming.ExcludedHandles)
+        {
+            _dimming.ExcludedHandles.Clear();
+            foreach (var w in AvailableWindows.Where(x => x.IsSelected))
+                _dimming.ExcludedHandles.Add(w.Handle);
+        }
     }
 
     private void ApplyFilter()

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 using DeepFocusForWindows.Models;
 using DeepFocusForWindows.Services;
 using DeepFocusForWindows.ViewModels;
@@ -39,15 +38,13 @@ public class ConfigurationViewModelTests
     {
         var initial = new AppSettings
         {
-            DimmingLevel   = 55,
-            StartOnBoot    = false,
-            IsDimmingEnabled = true
+            DimmingLevel = 55,
+            StartOnBoot  = false,
         };
         var (vm, _, _) = Create(initial);
 
         vm.DimmingLevel.Should().Be(55);
         vm.StartOnBoot.Should().BeFalse();
-        vm.IsDimmingEnabled.Should().BeTrue();
     }
 
     [Fact]
@@ -59,43 +56,42 @@ public class ConfigurationViewModelTests
     }
 
     [Fact]
-    public void IsDimmingEnabled_True_CallsDimmingServiceEnable()
+    public void TogglePreviewCommand_Enable_CallsDimmingServiceEnable()
     {
         var (vm, _, dimming) = Create();
-        vm.IsDimmingEnabled = true;
+        vm.TogglePreviewCommand.Execute(null);
         dimming.Received(1).Enable();
+        vm.IsPreviewActive.Should().BeTrue();
     }
 
     [Fact]
-    public void IsDimmingEnabled_False_CallsDimmingServiceDisable()
+    public void TogglePreviewCommand_Disable_CallsDimmingServiceDisable()
     {
-        var (vm, _, dimming) = Create(new AppSettings { IsDimmingEnabled = true });
-        vm.IsDimmingEnabled = false;
+        var (vm, _, dimming) = Create();
+        vm.TogglePreviewCommand.Execute(null); // enable
+        vm.TogglePreviewCommand.Execute(null); // disable
         dimming.Received(1).Disable();
+        vm.IsPreviewActive.Should().BeFalse();
     }
 
     [Fact]
-    public async Task ApplyCommand_PersistsSettings()
+    public void OnWindowClosing_StopsActivePreview()
     {
-        var (vm, settings, _) = Create();
-        vm.DimmingLevel = 80;
-        vm.StartOnBoot  = false;
-
-        await vm.ApplyCommand.ExecuteAsync(null);
-
-        await settings.Received(1).SaveAsync();
-        settings.Settings.DimmingLevel.Should().Be(80);
-        settings.Settings.StartOnBoot.Should().BeFalse();
+        var (vm, _, dimming) = Create();
+        vm.TogglePreviewCommand.Execute(null); // enable preview
+        vm.OnWindowClosing();
+        dimming.Received(1).Disable();
+        vm.IsPreviewActive.Should().BeFalse();
     }
 
     [Fact]
-    public void CloseRequested_RaisedOnSaveAndClose()
+    public void CloseCommand_RaisesCloseRequested()
     {
         var (vm, _, _) = Create();
         bool raised = false;
         vm.CloseRequested += (_, _) => raised = true;
 
-        vm.SaveAndCloseCommand.Execute(null);
+        vm.CloseCommand.Execute(null);
 
         raised.Should().BeTrue();
     }

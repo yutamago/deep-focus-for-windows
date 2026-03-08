@@ -1,11 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DeepFocusForWindows.Models;
+using DeepFocusForWindows.Native;
 using DeepFocusForWindows.Services;
 
 namespace DeepFocusForWindows.ViewModels;
@@ -41,29 +47,36 @@ public partial class ConfigurationViewModel : ViewModelBase
     private bool _startOnBoot;
 
     [ObservableProperty]
-    private bool _isDimmingEnabled;
-
-    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DimmingLevelText))]
     private int _dimmingLevel;
 
     [ObservableProperty]
-    private bool _autoDimOnFocusSession;
+    private bool _dimTaskbar;
 
     [ObservableProperty]
     private string _searchText = string.Empty;
 
-    /// <summary>True while the user is in "edit focus apps" mode (shows full list + search).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(EditButtonText))]
     [NotifyPropertyChangedFor(nameof(IsSearchVisible))]
     [NotifyPropertyChangedFor(nameof(NoSelectionHintVisible))]
     private bool _isEditingFocusApps;
 
-    public string DimmingLevelText     => $"{DimmingLevel}%";
-    public string EditButtonText       => IsEditingFocusApps ? "Done" : "Edit";
-    public bool   IsSearchVisible      => IsEditingFocusApps;
-    public bool   IsFocusSessionSupported => _focusSession.IsSupported;
+    /// <summary>True while the preview button is toggled on.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PreviewButtonText))]
+    private bool _isPreviewActive;
+
+    /// <summary>True while the user is in window-picker mode.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PickButtonText))]
+    private bool _isPickingWindow;
+
+    public string DimmingLevelText  => $"{DimmingLevel}%";
+    public string EditButtonText    => IsEditingFocusApps ? "Done" : "Edit";
+    public bool   IsSearchVisible   => IsEditingFocusApps;
+    public string PreviewButtonText => IsPreviewActive ? "◼ Stop Preview" : "▶ Preview";
+    public string PickButtonText    => IsPickingWindow  ? "✕ Cancel Pick"  : "⊕ Pick Window";
 
     /// <summary>Shown when not editing and no apps are selected yet.</summary>
     public bool NoSelectionHintVisible =>
@@ -75,18 +88,18 @@ public partial class ConfigurationViewModel : ViewModelBase
     /// <summary>Filtered/sorted view bound to the ListBox.</summary>
     public ObservableCollection<WindowInfoViewModel> FilteredWindows { get; } = [];
 
-    // ── Partial handlers (auto-save on every change) ─────────────────────────
-
-    partial void OnIsDimmingEnabledChanged(bool value)
-    {
-        if (value) _dimming.Enable();
-        else       _dimming.Disable();
-        _ = SaveAsync();
-    }
+    // ── Partial handlers ─────────────────────────────────────────────────────
 
     partial void OnDimmingLevelChanged(int value)
     {
         _dimming.DimmingLevel = value;
+        _ = SaveAsync();
+        TriggerSliderPreview();
+    }
+
+    partial void OnDimTaskbarChanged(bool value)
+    {
+        _dimming.DimTaskbar = value;
         _ = SaveAsync();
     }
 
@@ -95,9 +108,6 @@ public partial class ConfigurationViewModel : ViewModelBase
         _startup.SetStartOnBoot(value);
         _ = SaveAsync();
     }
-
-    partial void OnAutoDimOnFocusSessionChanged(bool value)
-        => _ = SaveAsync();
 
     partial void OnSearchTextChanged(string value)
         => ApplyFilter();
@@ -108,12 +118,43 @@ public partial class ConfigurationViewModel : ViewModelBase
         ApplyFilter();
     }
 
-    // ── Commands ────────────────────────────────────────────────────────────
+    // ── Slider preview (debounced) ────────────────────────────────────────────
+
+    private bool _isSliderPreviewActive;
+    private CancellationTokenSource? _sliderPreviewCts;
+
+    private void TriggerSliderPreview()
+    {
+        // Only auto-preview when neither the Preview button nor a focus session is active.
+        if (!_isSliderPreviewActive && !IsPreviewActive && !_focusSession.IsFocusActive)
+        {
+            _isSliderPreviewActive = true;
+            _dimming.Enable(false);
+        }
+
+        _sliderPreviewCts?.Cancel();
+        _sliderPreviewCts = new CancellationTokenSource();
+        var cts = _sliderPreviewCts;
+
+        _ = Task.Delay(1500, cts.Token).ContinueWith(t =>
+        {
+            if (t.IsCanceled) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_isSliderPreviewActive)
+                {
+                    _isSliderPreviewActive = false;
+                    _dimming.Disable(false);
+                }
+            });
+        }, TaskScheduler.Default);
+    }
+
+    // ── Commands ─────────────────────────────────────────────────────────────
 
     [RelayCommand]
     private void RefreshWindows()
     {
-        // Preserve handles selected during this session.
         var currentHandles = AvailableWindows
             .Where(w => w.IsSelected)
             .Select(w => w.Handle)
@@ -146,13 +187,141 @@ public partial class ConfigurationViewModel : ViewModelBase
         => IsEditingFocusApps = !IsEditingFocusApps;
 
     [RelayCommand]
+    private void TogglePreview()
+    {
+        if (!IsPreviewActive)
+        {
+            IsPreviewActive = true;
+            _dimming.Enable(false);
+        }
+        else
+        {
+            IsPreviewActive = false;
+            _dimming.Disable(false);
+        }
+    }
+
+    [RelayCommand]
+    private void TogglePickWindow()
+    {
+        if (!IsPickingWindow)
+            StartPickingWindow();
+        else
+            StopPickingWindow();
+    }
+
+    [RelayCommand]
     private void Close() => CloseRequested?.Invoke(this, EventArgs.Empty);
 
-    // ── Events ──────────────────────────────────────────────────────────────
+    // ── Window picker ─────────────────────────────────────────────────────────
+
+    private IntPtr _configWindowHwnd;
+    private IntPtr _mouseHookHandle;
+    private NativeMethods.LowLevelMouseProc? _mouseHookProc; // must be field to prevent GC
+
+    /// <summary>Called by the code-behind to give the VM the config window's HWND.</summary>
+    public void SetConfigWindowHwnd(IntPtr hwnd) => _configWindowHwnd = hwnd;
+
+    private void StartPickingWindow()
+    {
+        IsPickingWindow = true;
+        _mouseHookProc  = PickerMouseHookProc;
+        _mouseHookHandle = NativeMethods.SetWindowsHookExMouse(
+            NativeMethods.WH_MOUSE_LL, _mouseHookProc, IntPtr.Zero, 0);
+    }
+
+    private void StopPickingWindow()
+    {
+        if (_mouseHookHandle != IntPtr.Zero)
+        {
+            NativeMethods.UnhookWindowsHookEx(_mouseHookHandle);
+            _mouseHookHandle = IntPtr.Zero;
+        }
+        _mouseHookProc  = null;
+        IsPickingWindow = false;
+    }
+
+    private IntPtr PickerMouseHookProc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        var hookHandle = _mouseHookHandle; // local copy for CallNextHookEx
+
+        if (nCode >= 0 && (int)wParam == NativeMethods.WM_LBUTTONDOWN)
+        {
+            var hookStruct = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
+            var clickedHwnd = NativeMethods.WindowFromPoint(hookStruct.pt);
+            var rootHwnd    = NativeMethods.GetAncestor(clickedHwnd, NativeMethods.GA_ROOT);
+
+            // Ignore clicks on the config window itself.
+            if (rootHwnd != _configWindowHwnd && rootHwnd != IntPtr.Zero)
+            {
+                var titleSb = new StringBuilder(256);
+                NativeMethods.GetWindowText(rootHwnd, titleSb, titleSb.Capacity);
+                var title = titleSb.ToString();
+
+                NativeMethods.GetWindowThreadProcessId(rootHwnd, out uint pid);
+                var procName = string.Empty;
+                try { procName = Process.GetProcessById((int)pid).ProcessName; } catch { }
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    AddPickedWindow(rootHwnd, title, procName);
+                    StopPickingWindow();
+                });
+            }
+        }
+
+        return NativeMethods.CallNextHookEx(hookHandle, nCode, wParam, lParam);
+    }
+
+    private void AddPickedWindow(IntPtr rootHwnd, string title, string procName)
+    {
+        // If already in the list, just select it.
+        var existing = AvailableWindows.FirstOrDefault(w => w.Handle == rootHwnd);
+        if (existing is not null)
+        {
+            if (!existing.IsSelected)
+                existing.IsSelected = true;
+            return;
+        }
+
+        // Add as a new entry.
+        var info = new WindowInfo { Handle = rootHwnd, Title = title, ProcessName = procName };
+        var vm   = new WindowInfoViewModel(info)
+        {
+            IsSelected       = true,
+            SelectionChanged = OnWindowSelectionChanged,
+        };
+        AvailableWindows.Add(vm);
+        ApplyFilter();
+        SyncDimmingExclusions();
+        _ = SaveAsync();
+    }
+
+    // ── Called by code-behind on window closing ──────────────────────────────
+
+    public void OnWindowClosing()
+    {
+        StopPickingWindow();
+
+        if (IsPreviewActive)
+        {
+            IsPreviewActive = false;
+            _dimming.Disable();
+        }
+
+        if (_isSliderPreviewActive)
+        {
+            _sliderPreviewCts?.Cancel();
+            _isSliderPreviewActive = false;
+            _dimming.Disable();
+        }
+    }
+
+    // ── Events ───────────────────────────────────────────────────────────────
 
     public event EventHandler? CloseRequested;
 
-    // ── Helpers ─────────────────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void OnWindowSelectionChanged(WindowInfoViewModel vm)
     {
@@ -160,7 +329,6 @@ public partial class ConfigurationViewModel : ViewModelBase
         _ = SaveAsync();
         OnPropertyChanged(nameof(NoSelectionHintVisible));
 
-        // When not editing: refresh list so deselected items disappear.
         if (!IsEditingFocusApps)
             ApplyFilter();
     }
@@ -168,19 +336,17 @@ public partial class ConfigurationViewModel : ViewModelBase
     private void LoadFromSettings()
     {
         var s = _settings.Settings;
-        StartOnBoot           = s.StartOnBoot;
-        IsDimmingEnabled      = s.IsDimmingEnabled;
-        DimmingLevel          = s.DimmingLevel;
-        AutoDimOnFocusSession = s.AutoDimOnFocusSession;
+        StartOnBoot  = s.StartOnBoot;
+        DimmingLevel = s.DimmingLevel;
+        DimTaskbar   = s.DimTaskbar;
     }
 
     private async Task SaveAsync()
     {
         var s = _settings.Settings;
-        s.StartOnBoot           = StartOnBoot;
-        s.IsDimmingEnabled      = IsDimmingEnabled;
-        s.DimmingLevel          = DimmingLevel;
-        s.AutoDimOnFocusSession = AutoDimOnFocusSession;
+        s.StartOnBoot  = StartOnBoot;
+        s.DimmingLevel = DimmingLevel;
+        s.DimTaskbar   = DimTaskbar;
         s.FocusApps = AvailableWindows
             .Where(w => w.IsSelected)
             .Select(w => new FocusAppEntry { ProcessName = w.ProcessName, Title = w.Title })
@@ -203,8 +369,6 @@ public partial class ConfigurationViewModel : ViewModelBase
         FilteredWindows.Clear();
         var query = SearchText?.Trim() ?? string.Empty;
 
-        // When not editing: only show selected apps.
-        // When editing: show all, selected first (each group sorted by title).
         IEnumerable<WindowInfoViewModel> source = IsEditingFocusApps
             ? AvailableWindows
             : AvailableWindows.Where(w => w.IsSelected);

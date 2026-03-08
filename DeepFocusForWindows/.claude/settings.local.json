@@ -4,7 +4,10 @@
       "Bash(dotnet build --nologo)",
       "Bash(dotnet test --nologo --verbosity normal)",
       "Bash(dotnet build --no-restore -v quiet)",
-      "Bash(dotnet build DeepFocusForWindows.Tests/DeepFocusForWindows.Tests.csproj --no-restore -v quiet)"
+      "Bash(dotnet build DeepFocusForWindows.Tests/DeepFocusForWindows.Tests.csproj --no-restore -v quiet)",
+      "Bash(taskkill /PID 376 /F)",
+      "Bash(dotnet build DeepFocusForWindows/DeepFocusForWindows.csproj -v q)",
+      "Bash(dotnet build DeepFocusForWindows.Tests/DeepFocusForWindows.Tests.csproj -v q)"
     ]
   }
 }

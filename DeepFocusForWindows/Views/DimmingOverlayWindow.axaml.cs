@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
@@ -15,6 +16,17 @@ public partial class DimmingOverlayWindow : Window
     private volatile IntPtr _configWindowHandle;
     private volatile bool _active;
     private CancellationTokenSource? _cts;
+
+    /// <summary>
+    /// When false the taskbar (Shell_TrayWnd / Shell_SecondaryTrayWnd) is excluded from
+    /// the overlay region so it stays fully visible. Written from the UI thread, read on
+    /// the region-update thread — volatile ensures visibility across threads.
+    /// </summary>
+    public volatile bool DimTaskbar = true;
+
+    // Cached taskbar HWNDs; refreshed in the region loop every ~1 s.
+    private IntPtr[] _taskbarHwnds = [];
+    private int _taskbarRefreshTick;
 
     // Parameterless constructor required by Avalonia XAML loader.
     public DimmingOverlayWindow() : this(new HashSet<IntPtr>(), 70) { }
@@ -156,6 +168,24 @@ public partial class DimmingOverlayWindow : Window
             if (cfgVisible)
                 curRects[cfgHwnd] = (cfgR.Left, cfgR.Top, cfgR.Right, cfgR.Bottom);
 
+            // Taskbar: excluded when DimTaskbar is false.
+            // Refresh the cached HWND list every ~60 frames (≈1 s at 60 fps).
+            bool dimTaskbar = DimTaskbar;
+            if (!dimTaskbar && ++_taskbarRefreshTick % 60 == 1)
+                RefreshTaskbarHandles();
+
+            var taskbarRects = new List<(int L, int T, int R, int B)>();
+            if (!dimTaskbar)
+            {
+                foreach (var tbHwnd in _taskbarHwnds)
+                {
+                    if (!NativeMethods.IsWindowVisible(tbHwnd)) continue;
+                    if (!NativeMethods.GetWindowRect(tbHwnd, out var tbR) || tbR.Width <= 0) continue;
+                    curRects[tbHwnd] = (tbR.Left, tbR.Top, tbR.Right, tbR.Bottom);
+                    taskbarRects.Add((tbR.Left, tbR.Top, tbR.Right, tbR.Bottom));
+                }
+            }
+
             // ── Skip if nothing changed ──────────────────────────────────────
             if (vx == pvx && vy == pvy && vw == pvw && vh == pvh
                 && RectDictionariesEqual(prevRects, curRects))
@@ -190,6 +220,14 @@ public partial class DimmingOverlayWindow : Window
                 NativeMethods.DeleteObject(focusRgn);
             }
 
+            // Taskbar: simple full-rect holes (always on top, no Z-order adjustment needed).
+            foreach (var (tL, tT, tR, tB) in taskbarRects)
+            {
+                IntPtr hole = NativeMethods.CreateRectRgn(tL, tT, tR, tB);
+                NativeMethods.CombineRgn(region, region, hole, NativeMethods.RGN_DIFF);
+                NativeMethods.DeleteObject(hole);
+            }
+
             // bRedraw = false: DWM picks up the region change at its next
             // composition step; safe from a non-owning thread.
             NativeMethods.SetWindowRgn(hwnd, region, false);
@@ -201,6 +239,21 @@ public partial class DimmingOverlayWindow : Window
             foreach (var kvp in curRects)
                 prevRects[kvp.Key] = kvp.Value;
         }
+    }
+
+    private void RefreshTaskbarHandles()
+    {
+        var list = new List<IntPtr>();
+        var sb   = new StringBuilder(64);
+        NativeMethods.EnumWindows((h, _) =>
+        {
+            NativeMethods.GetClassName(h, sb, sb.Capacity);
+            var cls = sb.ToString();
+            if (cls is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
+                list.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        _taskbarHwnds = [.. list];
     }
 
     private static bool RectDictionariesEqual(

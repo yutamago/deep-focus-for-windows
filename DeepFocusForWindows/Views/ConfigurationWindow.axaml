@@ -4,8 +4,8 @@
         x:Class="DeepFocusForWindows.Views.ConfigurationWindow"
         x:DataType="vm:ConfigurationViewModel"
         Title="DeepFocus – Configuration"
-        Width="620" Height="580"
-        MinWidth="480" MinHeight="500"
+        Width="620" Height="520"
+        MinWidth="480" MinHeight="440"
         WindowStartupLocation="CenterScreen"
         Icon="/Assets/avalonia-logo.ico">
 
@@ -18,6 +18,9 @@
                            FontSize="16" FontWeight="SemiBold"
                            VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                    <Button Content="{Binding PickButtonText}"
+                            Command="{Binding TogglePickWindowCommand}"
+                            ToolTip.Tip="Click any window on screen to add it as a focus app"/>
                     <Button Content="↺  Refresh"
                             Command="{Binding RefreshWindowsCommand}"
                             IsVisible="{Binding IsEditingFocusApps}"/>
@@ -28,6 +31,14 @@
 
             <TextBlock Text="These windows will remain fully visible while dimming is active."
                        TextWrapping="Wrap" Opacity="0.7"/>
+
+            <!-- Picker hint shown during window-picker mode -->
+            <Border Background="{DynamicResource SystemControlHighlightAccentBrush}"
+                    CornerRadius="4" Padding="10 6"
+                    IsVisible="{Binding IsPickingWindow}">
+                <TextBlock Text="🎯  Click any window on screen to add it as a focus app…"
+                           Foreground="White" FontWeight="SemiBold"/>
+            </Border>
 
             <!-- Search box — only visible while editing -->
             <TextBox Watermark="Search by title or process name…"
@@ -89,20 +100,14 @@
                            VerticalAlignment="Center" Width="40"/>
             </Grid>
 
-            <CheckBox IsChecked="{Binding IsDimmingEnabled}"
-                      Content="Enable dimming"/>
+            <CheckBox IsChecked="{Binding DimTaskbar}"
+                      Content="Dim the taskbar"/>
 
-            <TextBlock Text="💡 Press ESC twice quickly to temporarily disable dimming."
+            <TextBlock Text="💡 Dimming activates automatically during a Windows Focus Session. Moving the slider shows a live preview."
                        Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
 
-            <!-- ─── Focus Session ─────────────────────────────────────── -->
-            <Separator Margin="0 6"/>
-            <CheckBox IsChecked="{Binding AutoDimOnFocusSession}"
-                      IsEnabled="{Binding IsFocusSessionSupported}"
-                      Content="Automatically dim only while a Windows Focus Session is active"/>
-            <TextBlock IsVisible="{Binding !IsFocusSessionSupported}"
-                       Text="(Windows Focus Sessions not available on this device)"
-                       Opacity="0.5" FontSize="11"/>
+            <TextBlock Text="💡 Press ESC twice quickly to temporarily hide the overlay."
+                       Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
 
             <!-- ─── Startup ───────────────────────────────────────────── -->
             <Separator Margin="0 6"/>
@@ -111,7 +116,10 @@
 
             <!-- ─── Actions ───────────────────────────────────────────── -->
             <Separator Margin="0 6"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                <Button Content="{Binding PreviewButtonText}"
+                        Command="{Binding TogglePreviewCommand}"
+                        ToolTip.Tip="Toggle dimming preview (automatically stops when this window closes)"/>
                 <Button Content="Close"
                         Command="{Binding CloseCommand}"/>
             </StackPanel>

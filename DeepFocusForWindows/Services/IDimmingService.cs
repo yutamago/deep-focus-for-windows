@@ -8,6 +8,8 @@ public interface IDimmingService
     bool IsActive { get; }
     bool IsTemporarilyDisabled { get; }
     int DimmingLevel { get; set; }
+    /// <summary>When true (default) the taskbar is covered by the overlay. When false it is revealed.</summary>
+    bool DimTaskbar { get; set; }
     /// <summary>
     /// The exact window handles to keep visible through the overlay.
     /// Tracks individual windows rather than whole processes, so that wrapper
@@ -17,16 +19,19 @@ public interface IDimmingService
     ISet<IntPtr> ExcludedHandles { get; }
 
     /// <summary>Must be called on the UI thread.</summary>
-    void Enable();
+    void Enable(bool minimizeNonFocusWindows = true);
 
     /// <summary>Must be called on the UI thread.</summary>
-    void Disable();
+    void Disable(bool restoreNonFocusWindows = true);
 
     /// <summary>Temporarily hide the overlay (ESC×2). Must be called on the UI thread.</summary>
     void TemporarilyDisable();
 
     /// <summary>Re-show the overlay if it was temporarily disabled. UI thread.</summary>
     void RestoreFromTemporaryDisable();
+
+    /// <summary>Force-clear all enable counts and restore minimized windows. Call on app exit.</summary>
+    void ForceDisableAll();
 
     /// <summary>Register the config window handle so it is always excluded from dimming.</summary>
     void SetConfigWindowHandle(IntPtr hwnd);

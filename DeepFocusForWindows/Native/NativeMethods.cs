@@ -129,4 +129,47 @@ internal static class NativeMethods
         public int Width  => Right  - Left;
         public int Height => Bottom - Top;
     }
+
+    // ── Window class name ────────────────────────────────────────────────────
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+    // ── Window show state ────────────────────────────────────────────────────
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    public const int SW_SHOWMINNOACTIVE = 7;
+    public const int SW_RESTORE         = 9;
+
+    // ── Hit-test / window from point ─────────────────────────────────────────
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+    public const uint GA_ROOT = 2u;
+
+    // ── Low-level mouse hook ──────────────────────────────────────────────────
+    public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto, EntryPoint = "SetWindowsHookExW")]
+    public static extern IntPtr SetWindowsHookExMouse(int idHook, LowLevelMouseProc lpfn,
+        IntPtr hMod, uint dwThreadId);
+
+    public const int WH_MOUSE_LL    = 14;
+    public const int WM_LBUTTONDOWN = 0x0201;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSLLHOOKSTRUCT
+    {
+        public POINT  pt;
+        public uint   mouseData;
+        public uint   flags;
+        public uint   time;
+        public IntPtr dwExtraInfo;
+    }
 }

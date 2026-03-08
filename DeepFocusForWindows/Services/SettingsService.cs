@@ -28,11 +28,10 @@ public class SettingsService : ISettingsService
             return;
         }
 
-        await using var stream = File.OpenRead(path);
-
         try
         {
-            Settings = await JsonSerializer.DeserializeAsync<AppSettings>(stream) ?? new AppSettings();
+            var settings = await File.ReadAllTextAsync(path).ConfigureAwait(false);
+            Settings = JsonSerializer.Deserialize<AppSettings>(settings) ?? new AppSettings();
         }
         catch(Exception ex)
         {

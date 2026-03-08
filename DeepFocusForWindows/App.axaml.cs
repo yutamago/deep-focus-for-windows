@@ -62,12 +62,11 @@ public partial class App : Application
             _services.GetRequiredService<IKeyboardHookService>().Start();
             WireEscDoublePress();
 
-            // Restore dimming from persisted settings.
-            // We track HWNDs at runtime; on startup we re-match saved (ProcessName, Title)
-            // pairs against currently visible windows as a best-effort.
+            // Restore saved focus-app handles (best-effort match by ProcessName+Title).
             var dimming    = _services.GetRequiredService<IDimmingService>();
             var windowEnum = _services.GetRequiredService<IWindowEnumerationService>();
             dimming.DimmingLevel = settings.Settings.DimmingLevel;
+            dimming.DimTaskbar   = settings.Settings.DimTaskbar;
             var saved = settings.Settings.FocusApps;
             lock (dimming.ExcludedHandles)
             {
@@ -81,8 +80,6 @@ public partial class App : Application
                     }
                 }
             }
-            if (settings.Settings.IsDimmingEnabled)
-                dimming.Enable();
 
             // Show a toast whenever dimming state changes.
             dimming.StateChanged += (_, _) =>
@@ -126,17 +123,13 @@ public partial class App : Application
     {
         var focus   = _services!.GetRequiredService<IFocusSessionService>();
         var dimming = _services!.GetRequiredService<IDimmingService>();
-        var set     = _services!.GetRequiredService<ISettingsService>();
 
         focus.FocusActiveChanged += (_, _) =>
-        {
-            if (!set.Settings.AutoDimOnFocusSession) return;
             Dispatcher.UIThread.Post(() =>
             {
                 if (focus.IsFocusActive) dimming.Enable();
                 else                     dimming.Disable();
             });
-        };
     }
 
     // ── ESC double-press ──────────────────────────────────────────────────────
@@ -162,18 +155,12 @@ public partial class App : Application
         {
             var dimming = _services!.GetRequiredService<IDimmingService>();
 
-            var toggleItem   = new NativeMenuItem { Header = GetToggleHeader(dimming) };
+            var statusItem   = new NativeMenuItem { Header = GetStatusHeader(dimming), IsEnabled = false };
             var settingsItem = new NativeMenuItem { Header = "Open Settings" };
             var exitItem     = new NativeMenuItem { Header = "Exit" };
 
             dimming.StateChanged += (_, _) =>
-                toggleItem.Header = GetToggleHeader(dimming);
-
-            toggleItem.Click += (_, _) => Dispatcher.UIThread.Post(() =>
-            {
-                if (dimming.IsActive) dimming.Disable();
-                else                  dimming.Enable();
-            });
+                statusItem.Header = GetStatusHeader(dimming);
 
             settingsItem.Click += (_, _) =>
                 Dispatcher.UIThread.Post(ShowConfigurationWindow);
@@ -185,7 +172,7 @@ public partial class App : Application
             };
 
             var menu = new NativeMenu();
-            menu.Items.Add(toggleItem);
+            menu.Items.Add(statusItem);
             menu.Items.Add(new NativeMenuItemSeparator());
             menu.Items.Add(settingsItem);
             menu.Items.Add(new NativeMenuItemSeparator());
@@ -212,15 +199,15 @@ public partial class App : Application
         }
     }
 
-    private static string GetToggleHeader(IDimmingService d)
-        => (d.IsActive && !d.IsTemporarilyDisabled) ? "Disable Dimming" : "Enable Dimming";
+    private static string GetStatusHeader(IDimmingService d)
+        => d.IsActive ? "● Dimming active" : "○ Dimming inactive";
 
     private void ShowDimmingToast(IDimmingService dimming)
     {
-        string message = (dimming.IsActive && !dimming.IsTemporarilyDisabled)
-            ? "Dimming enabled"
-            : dimming.IsTemporarilyDisabled
-                ? "Dimming paused — press ESC twice to restore"
+        string message = dimming.IsTemporarilyDisabled
+            ? "Dimming paused — press ESC twice to restore"
+            : dimming.IsActive
+                ? "Dimming enabled"
                 : "Dimming disabled";
         ShowToast(message);
     }
@@ -266,6 +253,8 @@ public partial class App : Application
     {
         _services?.GetRequiredService<IKeyboardHookService>().Dispose();
         _services?.GetRequiredService<IFocusSessionService>().Stop();
+        // Ensure all windows minimized by us are restored before exit.
+        _services?.GetRequiredService<IDimmingService>().ForceDisableAll();
         _trayIcon?.Dispose();
     }
 

@@ -19,5 +19,12 @@ public partial class WindowInfoViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isSelected;
 
-    partial void OnIsSelectedChanged(bool value) => Model.IsSelected = value;
+    /// <summary>Invoked after IsSelected changes; wired by ConfigurationViewModel.</summary>
+    public Action<WindowInfoViewModel>? SelectionChanged { get; set; }
+
+    partial void OnIsSelectedChanged(bool value)
+    {
+        Model.IsSelected = value;
+        SelectionChanged?.Invoke(this);
+    }
 }

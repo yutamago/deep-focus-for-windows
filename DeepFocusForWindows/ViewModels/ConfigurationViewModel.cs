@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -52,36 +53,67 @@ public partial class ConfigurationViewModel : ViewModelBase
     [ObservableProperty]
     private string _searchText = string.Empty;
 
-    public string DimmingLevelText => $"{DimmingLevel}%";
+    /// <summary>True while the user is in "edit focus apps" mode (shows full list + search).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EditButtonText))]
+    [NotifyPropertyChangedFor(nameof(IsSearchVisible))]
+    [NotifyPropertyChangedFor(nameof(NoSelectionHintVisible))]
+    private bool _isEditingFocusApps;
 
-    public bool IsFocusSessionSupported => _focusSession.IsSupported;
+    public string DimmingLevelText     => $"{DimmingLevel}%";
+    public string EditButtonText       => IsEditingFocusApps ? "Done" : "Edit";
+    public bool   IsSearchVisible      => IsEditingFocusApps;
+    public bool   IsFocusSessionSupported => _focusSession.IsSupported;
 
-    /// <summary>Master list of all visible windows, sorted by title.</summary>
+    /// <summary>Shown when not editing and no apps are selected yet.</summary>
+    public bool NoSelectionHintVisible =>
+        !IsEditingFocusApps && AvailableWindows.All(w => !w.IsSelected);
+
+    /// <summary>Master list of all visible windows.</summary>
     public ObservableCollection<WindowInfoViewModel> AvailableWindows { get; } = [];
 
-    /// <summary>Filtered view of AvailableWindows bound to the ListBox.</summary>
+    /// <summary>Filtered/sorted view bound to the ListBox.</summary>
     public ObservableCollection<WindowInfoViewModel> FilteredWindows { get; } = [];
 
-    // ── Partial handlers ────────────────────────────────────────────────────
+    // ── Partial handlers (auto-save on every change) ─────────────────────────
 
     partial void OnIsDimmingEnabledChanged(bool value)
     {
         if (value) _dimming.Enable();
         else       _dimming.Disable();
+        _ = SaveAsync();
     }
 
     partial void OnDimmingLevelChanged(int value)
-        => _dimming.DimmingLevel = value;
+    {
+        _dimming.DimmingLevel = value;
+        _ = SaveAsync();
+    }
+
+    partial void OnStartOnBootChanged(bool value)
+    {
+        _startup.SetStartOnBoot(value);
+        _ = SaveAsync();
+    }
+
+    partial void OnAutoDimOnFocusSessionChanged(bool value)
+        => _ = SaveAsync();
 
     partial void OnSearchTextChanged(string value)
         => ApplyFilter();
+
+    partial void OnIsEditingFocusAppsChanged(bool value)
+    {
+        if (!value) SearchText = string.Empty;
+        ApplyFilter();
+    }
 
     // ── Commands ────────────────────────────────────────────────────────────
 
     [RelayCommand]
     private void RefreshWindows()
     {
-        // Preserve handles that were selected during this session.
+        // Preserve handles selected during this session.
         var currentHandles = AvailableWindows
             .Where(w => w.IsSelected)
             .Select(w => w.Handle)
@@ -89,7 +121,6 @@ public partial class ConfigurationViewModel : ViewModelBase
 
         AvailableWindows.Clear();
 
-        // Sort by title so the list is easy to scan.
         var windows = _windowEnum.GetVisibleWindows()
             .OrderBy(w => w.Title, StringComparer.OrdinalIgnoreCase);
 
@@ -97,13 +128,12 @@ public partial class ConfigurationViewModel : ViewModelBase
         {
             var vm = new WindowInfoViewModel(w)
             {
-                // Re-select if: saved in settings (matched by ProcessName + Title)
-                //               OR selected earlier in this session (matched by HWND).
                 IsSelected = _settings.Settings.FocusApps
                     .Any(e =>
                         string.Equals(e.ProcessName, w.ProcessName, StringComparison.OrdinalIgnoreCase)
                         && string.Equals(e.Title, w.Title, StringComparison.OrdinalIgnoreCase))
-                    || currentHandles.Contains(w.Handle)
+                    || currentHandles.Contains(w.Handle),
+                SelectionChanged = OnWindowSelectionChanged,
             };
             AvailableWindows.Add(vm);
         }
@@ -112,20 +142,11 @@ public partial class ConfigurationViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task ApplyAsync()
-    {
-        ApplyToSettings();
-        await _settings.SaveAsync();
-        SyncDimmingExclusions();
-        _startup.SetStartOnBoot(StartOnBoot);
-    }
+    private void ToggleFocusAppsEdit()
+        => IsEditingFocusApps = !IsEditingFocusApps;
 
     [RelayCommand]
-    private async Task SaveAndCloseAsync()
-    {
-        await ApplyAsync();
-        CloseRequested?.Invoke(this, EventArgs.Empty);
-    }
+    private void Close() => CloseRequested?.Invoke(this, EventArgs.Empty);
 
     // ── Events ──────────────────────────────────────────────────────────────
 
@@ -133,34 +154,42 @@ public partial class ConfigurationViewModel : ViewModelBase
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
+    private void OnWindowSelectionChanged(WindowInfoViewModel vm)
+    {
+        SyncDimmingExclusions();
+        _ = SaveAsync();
+        OnPropertyChanged(nameof(NoSelectionHintVisible));
+
+        // When not editing: refresh list so deselected items disappear.
+        if (!IsEditingFocusApps)
+            ApplyFilter();
+    }
+
     private void LoadFromSettings()
     {
         var s = _settings.Settings;
-        StartOnBoot            = s.StartOnBoot;
-        IsDimmingEnabled       = s.IsDimmingEnabled;
-        DimmingLevel           = s.DimmingLevel;
-        AutoDimOnFocusSession  = s.AutoDimOnFocusSession;
+        StartOnBoot           = s.StartOnBoot;
+        IsDimmingEnabled      = s.IsDimmingEnabled;
+        DimmingLevel          = s.DimmingLevel;
+        AutoDimOnFocusSession = s.AutoDimOnFocusSession;
     }
 
-    private void ApplyToSettings()
+    private async Task SaveAsync()
     {
         var s = _settings.Settings;
         s.StartOnBoot           = StartOnBoot;
         s.IsDimmingEnabled      = IsDimmingEnabled;
         s.DimmingLevel          = DimmingLevel;
         s.AutoDimOnFocusSession = AutoDimOnFocusSession;
-        // Save by (ProcessName + Title) so we can re-match after a restart.
         s.FocusApps = AvailableWindows
             .Where(w => w.IsSelected)
             .Select(w => new FocusAppEntry { ProcessName = w.ProcessName, Title = w.Title })
             .ToList();
+        await _settings.SaveAsync();
     }
 
     private void SyncDimmingExclusions()
     {
-        // Push the exact HWNDs so the overlay only reveals those specific windows,
-        // not every window belonging to the same wrapper process.
-        // Lock so the background region thread sees a consistent snapshot.
         lock (_dimming.ExcludedHandles)
         {
             _dimming.ExcludedHandles.Clear();
@@ -174,14 +203,21 @@ public partial class ConfigurationViewModel : ViewModelBase
         FilteredWindows.Clear();
         var query = SearchText?.Trim() ?? string.Empty;
 
-        foreach (var vm in AvailableWindows)
-        {
-            if (query.Length == 0
+        // When not editing: only show selected apps.
+        // When editing: show all, selected first (each group sorted by title).
+        IEnumerable<WindowInfoViewModel> source = IsEditingFocusApps
+            ? AvailableWindows
+            : AvailableWindows.Where(w => w.IsSelected);
+
+        var sorted = source
+            .Where(vm =>
+                query.Length == 0
                 || vm.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || vm.ProcessName.Contains(query, StringComparison.OrdinalIgnoreCase))
-            {
-                FilteredWindows.Add(vm);
-            }
-        }
+            .OrderBy(vm => vm.IsSelected ? 0 : 1)
+            .ThenBy(vm => vm.Title, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var vm in sorted)
+            FilteredWindows.Add(vm);
     }
 }

@@ -8,6 +8,7 @@ using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using DeepFocusForWindows.Native;
 using DeepFocusForWindows.Services;
 using DeepFocusForWindows.ViewModels;
 using DeepFocusForWindows.Views;
@@ -17,6 +18,8 @@ namespace DeepFocusForWindows;
 
 public partial class App : Application
 {
+    private const string AppAumid = "DeepFocusForWindows.App";
+
     private IServiceProvider?    _services;
     private TrayIcon?            _trayIcon;
     private ConfigurationWindow? _configWindow;
@@ -27,6 +30,9 @@ public partial class App : Application
     {
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             LogError("UnhandledException", e.ExceptionObject as Exception);
+
+        // Register AUMID so Windows toast notifications work for unpackaged apps.
+        NativeMethods.SetCurrentProcessExplicitAppUserModelID(AppAumid);
 
         DisableAvaloniaDataAnnotationValidation();
         _services = BuildServices();
@@ -77,6 +83,10 @@ public partial class App : Application
             }
             if (settings.Settings.IsDimmingEnabled)
                 dimming.Enable();
+
+            // Show a toast whenever dimming state changes.
+            dimming.StateChanged += (_, _) =>
+                Dispatcher.UIThread.Post(() => ShowDimmingToast(dimming));
         }
 
         // Call base FIRST so Avalonia's TrayIconManager and message-loop infrastructure
@@ -88,7 +98,9 @@ public partial class App : Application
         Dispatcher.UIThread.Post(() =>
         {
             SetupTrayIcon();
-            ShowConfigurationWindow();
+            // Only show the config window automatically on first run;
+            // afterwards the user opens it via the tray icon.
+            if (isFirstRun) ShowConfigurationWindow();
         });
     }
 
@@ -202,6 +214,33 @@ public partial class App : Application
 
     private static string GetToggleHeader(IDimmingService d)
         => (d.IsActive && !d.IsTemporarilyDisabled) ? "Disable Dimming" : "Enable Dimming";
+
+    private void ShowDimmingToast(IDimmingService dimming)
+    {
+        string message = (dimming.IsActive && !dimming.IsTemporarilyDisabled)
+            ? "Dimming enabled"
+            : dimming.IsTemporarilyDisabled
+                ? "Dimming paused — press ESC twice to restore"
+                : "Dimming disabled";
+        ShowToast(message);
+    }
+
+    private static void ShowToast(string message)
+    {
+        try
+        {
+            var xml = new Windows.Data.Xml.Dom.XmlDocument();
+            xml.LoadXml(
+                $"<toast duration=\"short\"><visual><binding template=\"ToastGeneric\">" +
+                $"<text>DeepFocus</text>" +
+                $"<text>{System.Security.SecurityElement.Escape(message)}</text>" +
+                $"</binding></visual></toast>");
+            var toast = new Windows.UI.Notifications.ToastNotification(xml);
+            Windows.UI.Notifications.ToastNotificationManager
+                .CreateToastNotifier(AppAumid).Show(toast);
+        }
+        catch { /* Silently ignore notification failures */ }
+    }
 
     // ── Configuration window ──────────────────────────────────────────────────
 

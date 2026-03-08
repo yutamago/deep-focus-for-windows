@@ -70,7 +70,18 @@ internal static class NativeMethods
     [DllImport("gdi32.dll")]
     public static extern bool DeleteObject(IntPtr hObject);
 
+    public const int RGN_OR   = 2;
     public const int RGN_DIFF = 4;
+
+    // ── Z-order traversal ────────────────────────────────────────────────────
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    public const uint GW_HWNDPREV = 3; // window immediately above in Z order
+
+    // ── Toast notification AUMID ─────────────────────────────────────────────
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
 
     // ── Screen metrics ──────────────────────────────────────────────────────
     [DllImport("user32.dll")]

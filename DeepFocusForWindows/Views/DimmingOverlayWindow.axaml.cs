@@ -90,58 +90,108 @@ public partial class DimmingOverlayWindow : Window
             var hwnd = _hwnd; // written once in OnOpened before this thread starts
             if (hwnd == IntPtr.Zero) continue;
 
-            // ── Gather current state ─────────────────────────────────────────
+            // ── Gather virtual screen ────────────────────────────────────────
             int vx = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
             int vy = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
             int vw = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
             int vh = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
 
-            // Brief lock just to snapshot the handle set; callers must also lock
-            // when mutating ExcludedHandles to prevent torn reads.
+            // Brief lock just to snapshot the handle set.
             IntPtr[] handles;
             lock (_excludedHandles)
                 handles = [.. _excludedHandles];
 
-            var cfgHwnd  = _configWindowHandle;
-            var curRects = new Dictionary<IntPtr, (int L, int T, int R, int B)>(handles.Length + 1);
+            var handlesSet = new HashSet<IntPtr>(handles);
+            var cfgHwnd    = _configWindowHandle;
 
-            if (cfgHwnd != IntPtr.Zero
-                && NativeMethods.IsWindowVisible(cfgHwnd)
-                && !NativeMethods.IsIconic(cfgHwnd)
-                && NativeMethods.GetWindowRect(cfgHwnd, out var cr)
-                && cr.Width > 0 && cr.Height > 0)
-            {
-                curRects[cfgHwnd] = (cr.Left, cr.Top, cr.Right, cr.Bottom);
-            }
+            // curRects tracks every HWND whose rect contributed to this frame
+            // (focus windows + covering non-focus windows + config window).
+            // Used for change detection: if this dict equals prevRects, skip SetWindowRgn.
+            var curRects = new Dictionary<IntPtr, (int L, int T, int R, int B)>();
+
+            // Per-focus-window list of covering rects to subtract.
+            var focusCoverMap =
+                new Dictionary<IntPtr, List<(int L, int T, int R, int B)>>();
 
             foreach (var h in handles)
             {
                 if (!NativeMethods.IsWindowVisible(h) || NativeMethods.IsIconic(h)) continue;
-                if (NativeMethods.GetWindowRect(h, out var r) && r.Width > 0 && r.Height > 0)
-                    curRects[h] = (r.Left, r.Top, r.Right, r.Bottom);
+                if (!NativeMethods.GetWindowRect(h, out var r) || r.Width <= 0 || r.Height <= 0) continue;
+
+                curRects[h] = (r.Left, r.Top, r.Right, r.Bottom);
+
+                // Walk windows above h in Z-order; collect non-focus windows
+                // that overlap h's rect so we can subtract them from the hole.
+                var covers = new List<(int L, int T, int R, int B)>();
+                var above  = NativeMethods.GetWindow(h, NativeMethods.GW_HWNDPREV);
+                while (above != IntPtr.Zero)
+                {
+                    if (above != hwnd                              // skip our own overlay
+                        && !handlesSet.Contains(above)            // skip other focus windows
+                        && NativeMethods.IsWindowVisible(above)
+                        && !NativeMethods.IsIconic(above)
+                        && NativeMethods.GetWindowRect(above, out var ar)
+                        && ar.Width > 0 && ar.Height > 0
+                        && ar.Right > r.Left && ar.Left < r.Right // overlaps focus rect
+                        && ar.Bottom > r.Top && ar.Top < r.Bottom)
+                    {
+                        covers.Add((ar.Left, ar.Top, ar.Right, ar.Bottom));
+                        // Track for change detection (don't overwrite a focus-window entry).
+                        if (!curRects.ContainsKey(above))
+                            curRects[above] = (ar.Left, ar.Top, ar.Right, ar.Bottom);
+                    }
+                    above = NativeMethods.GetWindow(above, NativeMethods.GW_HWNDPREV);
+                }
+
+                focusCoverMap[h] = covers;
             }
 
+            // Config window: always-excluded, no Z-order check needed.
+            NativeMethods.RECT cfgR = default;
+            bool cfgVisible = cfgHwnd != IntPtr.Zero
+                && NativeMethods.IsWindowVisible(cfgHwnd)
+                && !NativeMethods.IsIconic(cfgHwnd)
+                && NativeMethods.GetWindowRect(cfgHwnd, out cfgR)
+                && cfgR.Width > 0 && cfgR.Height > 0;
+            if (cfgVisible)
+                curRects[cfgHwnd] = (cfgR.Left, cfgR.Top, cfgR.Right, cfgR.Bottom);
+
             // ── Skip if nothing changed ──────────────────────────────────────
-            // This is the main perf win: when the user isn't moving windows,
-            // SetWindowRgn is never called, so DWM gets zero extra work.
             if (vx == pvx && vy == pvy && vw == pvw && vh == pvh
                 && RectDictionariesEqual(prevRects, curRects))
                 continue;
 
             // ── Build and apply new region ───────────────────────────────────
             IntPtr region = NativeMethods.CreateRectRgn(vx, vy, vx + vw, vy + vh);
-            foreach (var rect in curRects.Values)
+
+            // Config window: simple full-rect hole.
+            if (cfgVisible)
             {
-                IntPtr hole = NativeMethods.CreateRectRgn(rect.L, rect.T, rect.R, rect.B);
+                IntPtr hole = NativeMethods.CreateRectRgn(cfgR.Left, cfgR.Top, cfgR.Right, cfgR.Bottom);
                 NativeMethods.CombineRgn(region, region, hole, NativeMethods.RGN_DIFF);
                 NativeMethods.DeleteObject(hole);
             }
 
+            // Focus windows: carve only the visible portion
+            // (full rect minus all covering non-focus windows above them).
+            foreach (var (h, covers) in focusCoverMap)
+            {
+                var (fL, fT, fR, fB) = curRects[h];
+                IntPtr focusRgn = NativeMethods.CreateRectRgn(fL, fT, fR, fB);
+
+                foreach (var (cL, cT, cR, cB) in covers)
+                {
+                    IntPtr coverRgn = NativeMethods.CreateRectRgn(cL, cT, cR, cB);
+                    NativeMethods.CombineRgn(focusRgn, focusRgn, coverRgn, NativeMethods.RGN_DIFF);
+                    NativeMethods.DeleteObject(coverRgn);
+                }
+
+                NativeMethods.CombineRgn(region, region, focusRgn, NativeMethods.RGN_DIFF);
+                NativeMethods.DeleteObject(focusRgn);
+            }
+
             // bRedraw = false: DWM picks up the region change at its next
-            // composition step; no explicit window repaint is needed for a
-            // layered alpha overlay whose content never changes.
-            // Safe to call from a non-owning thread when bRedraw is false
-            // because no window messages are posted.
+            // composition step; safe from a non-owning thread.
             NativeMethods.SetWindowRgn(hwnd, region, false);
             // OS now owns the region handle; do not DeleteObject.
 

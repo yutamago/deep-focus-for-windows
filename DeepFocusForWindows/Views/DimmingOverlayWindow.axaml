@@ -1,0 +1,14 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DeepFocusForWindows.Views.DimmingOverlayWindow"
+        Background="Black"
+        SystemDecorations="None"
+        WindowStartupLocation="Manual"
+        ShowInTaskbar="False"
+        Focusable="False"
+        IsHitTestVisible="False"
+        CanResize="False"
+        Topmost="True">
+    <!-- Content is intentionally empty; the window is a pure dim overlay. -->
+    <Panel/>
+</Window>

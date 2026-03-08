@@ -1,0 +1,98 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DeepFocusForWindows.ViewModels"
+        x:Class="DeepFocusForWindows.Views.ConfigurationWindow"
+        x:DataType="vm:ConfigurationViewModel"
+        Title="DeepFocus – Configuration"
+        Width="620" Height="600"
+        MinWidth="480" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        Icon="/Assets/avalonia-logo.ico">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24" Spacing="14">
+
+            <!-- ─── Focus Applications ─────────────────────────────────── -->
+            <TextBlock Text="Focus Applications"
+                       FontSize="16" FontWeight="SemiBold"/>
+            <TextBlock Text="These windows will remain fully visible while dimming is active."
+                       TextWrapping="Wrap" Opacity="0.7"/>
+
+            <Button Content="↺  Refresh Active Windows"
+                    Command="{Binding RefreshWindowsCommand}"
+                    HorizontalAlignment="Left"/>
+
+            <TextBox Watermark="Search by title or process name…"
+                     Text="{Binding SearchText}"
+                     x:Name="SearchBox"/>
+
+            <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                    BorderThickness="1" CornerRadius="4" Height="160">
+                <ListBox ItemsSource="{Binding FilteredWindows}"
+                         Background="Transparent"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:WindowInfoViewModel">
+                            <CheckBox IsChecked="{Binding IsSelected}"
+                                      Margin="4 2">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="{Binding Title}"
+                                               FontWeight="SemiBold"
+                                               MaxWidth="300"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding ProcessNameLabel}"
+                                               Opacity="0.6" FontSize="11"/>
+                                </StackPanel>
+                            </CheckBox>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
+
+            <!-- ─── Dimming Settings ──────────────────────────────────── -->
+            <Separator Margin="0 6"/>
+            <TextBlock Text="Dimming Settings"
+                       FontSize="16" FontWeight="SemiBold"/>
+
+            <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto">
+                <TextBlock Grid.Column="0" Text="Level:" VerticalAlignment="Center"/>
+                <Slider Grid.Column="1" Margin="10 0"
+                        Minimum="0" Maximum="100"
+                        Value="{Binding DimmingLevel}"
+                        TickFrequency="10" IsSnapToTickEnabled="False"/>
+                <TextBlock Grid.Column="2" Text="{Binding DimmingLevelText}"
+                           VerticalAlignment="Center" Width="40"/>
+            </Grid>
+
+            <CheckBox IsChecked="{Binding IsDimmingEnabled}"
+                      Content="Enable dimming"/>
+
+            <TextBlock Text="💡 Press ESC twice quickly to temporarily disable dimming."
+                       Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
+
+            <!-- ─── Focus Session ─────────────────────────────────────── -->
+            <Separator Margin="0 6"/>
+            <CheckBox IsChecked="{Binding AutoDimOnFocusSession}"
+                      IsEnabled="{Binding IsFocusSessionSupported}"
+                      Content="Automatically dim only while a Windows Focus Session is active"/>
+            <TextBlock IsVisible="{Binding !IsFocusSessionSupported}"
+                       Text="(Windows Focus Sessions not available on this device)"
+                       Opacity="0.5" FontSize="11"/>
+
+            <!-- ─── Startup ───────────────────────────────────────────── -->
+            <Separator Margin="0 6"/>
+            <CheckBox IsChecked="{Binding StartOnBoot}"
+                      Content="Start DeepFocus when Windows starts"/>
+
+            <!-- ─── Actions ───────────────────────────────────────────── -->
+            <Separator Margin="0 6"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Apply" Command="{Binding ApplyCommand}"/>
+                <Button Content="Save &amp; Close"
+                        Command="{Binding SaveAndCloseCommand}"
+                        Classes="accent"/>
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</Window>

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build --nologo)",
+      "Bash(dotnet test --nologo --verbosity normal)",
+      "Bash(dotnet build --no-restore -v quiet)",
+      "Bash(dotnet build DeepFocusForWindows.Tests/DeepFocusForWindows.Tests.csproj --no-restore -v quiet)"
+    ]
+  }
+}

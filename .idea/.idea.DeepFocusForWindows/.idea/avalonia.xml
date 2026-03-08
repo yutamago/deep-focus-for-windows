@@ -3,6 +3,8 @@
   <component name="AvaloniaProject">
     <option name="projectPerEditor">
       <map>
+        <entry key="DeepFocusForWindows/Views/ConfigurationWindow.axaml" value="DeepFocusForWindows/DeepFocusForWindows.csproj" />
+        <entry key="DeepFocusForWindows/Views/DimmingOverlayWindow.axaml" value="DeepFocusForWindows/DeepFocusForWindows.csproj" />
         <entry key="DeepFocusForWindows/Views/MainWindow.axaml" value="DeepFocusForWindows/DeepFocusForWindows.csproj" />
       </map>
     </option>

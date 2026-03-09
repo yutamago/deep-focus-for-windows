@@ -167,6 +167,16 @@ public class DimmingService : IDimmingService
         var cfgHwnd = _configWindowHandle;
         var toMinimize = new List<IntPtr>();
 
+        // Create Virtual Desktop Manager to check window desktop
+        NativeMethods.IVirtualDesktopManager? vdm = null;
+        try
+        {
+            var clsidVirtualDesktopManager = new Guid("AA509086-5CA9-4C25-8F95-589D3C07B48A");
+            vdm = (NativeMethods.IVirtualDesktopManager)Activator.CreateInstance(
+                Type.GetTypeFromCLSID(clsidVirtualDesktopManager)!)!;
+        }
+        catch { /* Virtual desktop API not available */ }
+
         NativeMethods.EnumWindows((hwnd, _) =>
         {
             if (!NativeMethods.IsWindowVisible(hwnd) || NativeMethods.IsIconic(hwnd))
@@ -179,6 +189,20 @@ public class DimmingService : IDimmingService
             var sb = new StringBuilder(2);
             if (NativeMethods.GetWindowText(hwnd, sb, sb.Capacity) == 0)
                 return true;
+
+            // Check if window is on the current virtual desktop
+            if (vdm is not null)
+            {
+                try
+                {
+                    if (vdm.IsWindowOnCurrentVirtualDesktop(hwnd, out bool onCurrentDesktop) == 0)
+                    {
+                        if (!onCurrentDesktop)
+                            return true; // Skip windows on other virtual desktops
+                    }
+                }
+                catch { /* Ignore errors for individual windows */ }
+            }
 
             toMinimize.Add(hwnd);
             return true;

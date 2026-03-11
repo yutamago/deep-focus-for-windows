@@ -19,10 +19,10 @@ public interface IDimmingService
     ISet<IntPtr> ExcludedHandles { get; }
 
     /// <summary>Must be called on the UI thread.</summary>
-    void Enable(bool minimizeNonFocusWindows = true);
+    void Enable(bool minimizeNonFocusWindows = true, bool useFadeTransition = false);
 
     /// <summary>Must be called on the UI thread.</summary>
-    void Disable(bool restoreNonFocusWindows = true);
+    void Disable(bool restoreNonFocusWindows = true, bool useFadeTransition = false);
 
     /// <summary>Temporarily hide the overlay (ESC×2). Must be called on the UI thread.</summary>
     void TemporarilyDisable();

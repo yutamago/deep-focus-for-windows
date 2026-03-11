@@ -24,20 +24,38 @@ public class SettingsService : ISettingsService
         var path = GetSettingsPath();
         if (!File.Exists(path))
         {
-            Settings = new AppSettings();
+            Settings = GetDefaultSettings();
             return;
         }
 
         try
         {
             var settings = await File.ReadAllTextAsync(path).ConfigureAwait(false);
-            Settings = JsonSerializer.Deserialize<AppSettings>(settings) ?? new AppSettings();
+            Settings = JsonSerializer.Deserialize<AppSettings>(settings) ?? GetDefaultSettings();
         }
         catch(Exception ex)
         {
             Console.WriteLine("Failed to load settings.json: " + ex.Message);
-            Settings = new AppSettings();
+            Settings = GetDefaultSettings();
         }
+    }
+
+    private static AppSettings GetDefaultSettings()
+    {
+        return new AppSettings
+        {
+            StartOnBoot = true,
+            DimmingLevel = 70,
+            DimTaskbar = false,
+            FocusApps =
+            [
+                new FocusAppEntry
+                {
+                    ProcessName = "ApplicationFrameHost",
+                    Title = "Clock"
+                }
+            ]
+        };
     }
 
     public async Task SaveAsync()

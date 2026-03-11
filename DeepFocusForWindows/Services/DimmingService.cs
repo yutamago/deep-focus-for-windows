@@ -60,7 +60,7 @@ public class DimmingService : IDimmingService
     /// Increments the enable count. On the first Enable() call the overlay is shown
     /// and all non-focus visible windows are minimized.
     /// </summary>
-    public void Enable(bool minimizeNonFocusWindows = true)
+    public void Enable(bool minimizeNonFocusWindows = true, bool useFadeTransition = false)
     {
         Dispatcher.UIThread.VerifyAccess();
         _isTemporarilyDisabled = false;
@@ -70,7 +70,7 @@ public class DimmingService : IDimmingService
 
         if (wasInactive)
         {
-            ShowOverlay();
+            ShowOverlay(useFadeTransition);
 
             if (minimizeNonFocusWindows)
             {
@@ -85,7 +85,7 @@ public class DimmingService : IDimmingService
     /// Decrements the enable count. When the count reaches zero the overlay is hidden
     /// and all windows minimized by us are restored.
     /// </summary>
-    public void Disable(bool restoreNonFocusWindows = true)
+    public void Disable(bool restoreNonFocusWindows = true, bool useFadeTransition = false)
     {
         Dispatcher.UIThread.VerifyAccess();
         if (_activeCount == 0) return;
@@ -94,7 +94,7 @@ public class DimmingService : IDimmingService
         if (_activeCount == 0)
         {
             _isTemporarilyDisabled = false;
-            HideOverlay();
+            HideOverlay(useFadeTransition);
 
             if (restoreNonFocusWindows)
             {
@@ -111,7 +111,7 @@ public class DimmingService : IDimmingService
         Dispatcher.UIThread.VerifyAccess();
         if (_activeCount == 0) return;
         _isTemporarilyDisabled = true;
-        HideOverlay();
+        HideOverlay(false);
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -121,7 +121,7 @@ public class DimmingService : IDimmingService
         Dispatcher.UIThread.VerifyAccess();
         if (_activeCount == 0 || !_isTemporarilyDisabled) return;
         _isTemporarilyDisabled = false;
-        ShowOverlay();
+        ShowOverlay(false);
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -134,11 +134,11 @@ public class DimmingService : IDimmingService
         Dispatcher.UIThread.VerifyAccess();
         _activeCount = 0;
         _isTemporarilyDisabled = false;
-        HideOverlay();
+        HideOverlay(false);
         RestoreMinimizedByUs();
     }
 
-    private void ShowOverlay()
+    private void ShowOverlay(bool useFadeTransition = false)
     {
         if (_overlay is null)
         {
@@ -147,12 +147,18 @@ public class DimmingService : IDimmingService
             _overlay.DimTaskbar = _dimTaskbar;
         }
 
-        _overlay.Show();
+        if (useFadeTransition)
+            _overlay.ShowWithFade();
+        else
+            _overlay.Show();
     }
 
-    private void HideOverlay()
+    private void HideOverlay(bool useFadeTransition = false)
     {
-        _overlay?.Hide();
+        if (useFadeTransition)
+            _overlay?.HideWithFade();
+        else
+            _overlay?.Hide();
     }
 
     private void MinimizeNonFocusWindows()
@@ -165,6 +171,7 @@ public class DimmingService : IDimmingService
 
         var focusSet = new HashSet<IntPtr>(focusHandles);
         var cfgHwnd = _configWindowHandle;
+        var overlayHwnd = _overlay?.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
         var toMinimize = new List<IntPtr>();
 
         // Create Virtual Desktop Manager to check window desktop
@@ -182,7 +189,8 @@ public class DimmingService : IDimmingService
             if (!NativeMethods.IsWindowVisible(hwnd) || NativeMethods.IsIconic(hwnd))
                 return true;
 
-            if (focusSet.Contains(hwnd) || hwnd == cfgHwnd)
+            // Skip focus windows, config window, and overlay window
+            if (focusSet.Contains(hwnd) || hwnd == cfgHwnd || hwnd == overlayHwnd)
                 return true;
 
             // Only real application windows (must have a title).
@@ -217,8 +225,8 @@ public class DimmingService : IDimmingService
 
     private void RestoreMinimizedByUs()
     {
-        foreach (var hwnd in _minimizedByUs)
-            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
+        // Windows are NOT restored - they remain minimized
+        // Only clear the tracking list
         _minimizedByUs.Clear();
     }
 }

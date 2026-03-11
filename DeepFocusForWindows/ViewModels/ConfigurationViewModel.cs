@@ -55,6 +55,9 @@ public partial class ConfigurationViewModel : ViewModelBase
     private bool _dimTaskbar;
 
     [ObservableProperty]
+    private bool _minimizeNonFocusWindows;
+
+    [ObservableProperty]
     private string _searchText = string.Empty;
 
     [ObservableProperty]
@@ -95,13 +98,21 @@ public partial class ConfigurationViewModel : ViewModelBase
     {
         _dimming.DimmingLevel = value;
         if (!_isLoadingSettings)
+        {
             _ = SaveAsync();
-        TriggerSliderPreview();
+            TriggerSliderPreview();
+        }
     }
 
     partial void OnDimTaskbarChanged(bool value)
     {
         _dimming.DimTaskbar = value;
+        if (!_isLoadingSettings)
+            _ = SaveAsync();
+    }
+
+    partial void OnMinimizeNonFocusWindowsChanged(bool value)
+    {
         if (!_isLoadingSettings)
             _ = SaveAsync();
     }
@@ -216,6 +227,40 @@ public partial class ConfigurationViewModel : ViewModelBase
 
     [RelayCommand]
     private void Close() => CloseRequested?.Invoke(this, EventArgs.Empty);
+
+    [RelayCommand]
+    private async Task ResetToDefaults()
+    {
+        _isLoadingSettings = true;
+        try
+        {
+            StartOnBoot = true;
+            DimmingLevel = 70;
+            DimTaskbar = false;
+            MinimizeNonFocusWindows = true;
+
+            // Clear all selected windows and add the default Clock app
+            foreach (var w in AvailableWindows)
+                w.IsSelected = false;
+
+            // Try to find and select the Clock app if it exists
+            var clockApp = AvailableWindows.FirstOrDefault(w =>
+                string.Equals(w.ProcessName, "ApplicationFrameHost", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(w.Title, "Clock", StringComparison.OrdinalIgnoreCase));
+
+            if (clockApp != null)
+                clockApp.IsSelected = true;
+        }
+        finally
+        {
+            _isLoadingSettings = false;
+        }
+
+        SyncDimmingExclusions();
+        await SaveAsync();
+        ApplyFilter();
+        OnPropertyChanged(nameof(NoSelectionHintVisible));
+    }
 
     // ── Window picker ─────────────────────────────────────────────────────────
 
@@ -346,6 +391,7 @@ public partial class ConfigurationViewModel : ViewModelBase
             StartOnBoot  = s.StartOnBoot;
             DimmingLevel = s.DimmingLevel;
             DimTaskbar   = s.DimTaskbar;
+            MinimizeNonFocusWindows = s.MinimizeNonFocusWindows;
         }
         finally
         {
@@ -359,6 +405,7 @@ public partial class ConfigurationViewModel : ViewModelBase
         s.StartOnBoot  = StartOnBoot;
         s.DimmingLevel = DimmingLevel;
         s.DimTaskbar   = DimTaskbar;
+        s.MinimizeNonFocusWindows = MinimizeNonFocusWindows;
         s.FocusApps = AvailableWindows
             .Where(w => w.IsSelected)
             .Select(w => new FocusAppEntry { ProcessName = w.ProcessName, Title = w.Title })

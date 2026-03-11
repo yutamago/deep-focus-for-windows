@@ -77,7 +77,11 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 
+    [DllImport("user32.dll")]
+    public static extern bool IsWindow(IntPtr hWnd);
+
     public const uint GW_HWNDPREV = 3; // window immediately above in Z order
+    public const uint GW_HWNDNEXT = 2; // window immediately below in Z order
 
     // ── Toast notification AUMID ─────────────────────────────────────────────
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]

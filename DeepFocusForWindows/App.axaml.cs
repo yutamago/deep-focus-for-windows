@@ -127,8 +127,11 @@ public partial class App : Application
         focus.FocusActiveChanged += (_, _) =>
             Dispatcher.UIThread.Post(() =>
             {
-                if (focus.IsFocusActive) dimming.Enable(minimizeNonFocusWindows: false);
-                else                     dimming.Disable(restoreNonFocusWindows: false);
+                var settingsService = _services!.GetRequiredService<ISettingsService>();
+                if (focus.IsFocusActive)
+                    dimming.Enable(minimizeNonFocusWindows: settingsService.Settings.MinimizeNonFocusWindows, useFadeTransition: true);
+                else
+                    dimming.Disable(restoreNonFocusWindows: false, useFadeTransition: true);
             });
     }
 

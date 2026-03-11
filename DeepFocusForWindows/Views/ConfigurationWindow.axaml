@@ -103,6 +103,9 @@
             <CheckBox IsChecked="{Binding DimTaskbar}"
                       Content="Dim the taskbar"/>
 
+            <CheckBox IsChecked="{Binding MinimizeNonFocusWindows}"
+                      Content="Minimize non-focus windows when starting a focus session"/>
+
             <TextBlock Text="💡 Dimming activates automatically during a Windows Focus Session. Moving the slider shows a live preview."
                        Opacity="0.6" FontSize="11" TextWrapping="Wrap"/>
 
@@ -116,13 +119,14 @@
 
             <!-- ─── Actions ───────────────────────────────────────────── -->
             <Separator Margin="0 6"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-                <Button Content="{Binding PreviewButtonText}"
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <Button Grid.Column="2" Content="{Binding PreviewButtonText}"
                         Command="{Binding TogglePreviewCommand}"
-                        ToolTip.Tip="Toggle dimming preview (automatically stops when this window closes)"/>
-                <Button Content="Close"
+                        ToolTip.Tip="Toggle dimming preview (automatically stops when this window closes)"
+                        Margin="0 0 8 0"/>
+                <Button Grid.Column="3" Content="Close"
                         Command="{Binding CloseCommand}"/>
-            </StackPanel>
+            </Grid>
 
         </StackPanel>
     </ScrollViewer>

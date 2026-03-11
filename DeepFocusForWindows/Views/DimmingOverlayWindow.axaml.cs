@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Threading;
 using DeepFocusForWindows.Native;
 
 namespace DeepFocusForWindows.Views;
@@ -16,6 +18,7 @@ public partial class DimmingOverlayWindow : Window
     private volatile IntPtr _configWindowHandle;
     private volatile bool _active;
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _fadeCts;
 
     /// <summary>
     /// When false the taskbar (Shell_TrayWnd / Shell_SecondaryTrayWnd) is excluded from
@@ -53,7 +56,82 @@ public partial class DimmingOverlayWindow : Window
     {
         _dimmingLevel = dimmingLevel;
         if (_hwnd != IntPtr.Zero)
-            ApplyLayeredAttributes(_hwnd);
+            ApplyLayeredAttributes(_hwnd, _dimmingLevel);
+    }
+
+    public void ShowWithFade()
+    {
+        _fadeCts?.Cancel();
+        _fadeCts = new CancellationTokenSource();
+        var ct = _fadeCts.Token;
+
+        Show();
+
+        Task.Run(async () =>
+        {
+            try
+            {
+                const int steps = 20;
+                const int delayMs = 15; // 300ms total
+
+                for (int i = 0; i <= steps; i++)
+                {
+                    if (ct.IsCancellationRequested) return;
+
+                    int currentLevel = (_dimmingLevel * i) / steps;
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (_hwnd != IntPtr.Zero && !ct.IsCancellationRequested)
+                            ApplyLayeredAttributes(_hwnd, currentLevel);
+                    });
+
+                    await Task.Delay(delayMs, ct);
+                }
+            }
+            catch (OperationCanceledException) { }
+        }, ct);
+    }
+
+    public void HideWithFade()
+    {
+        _fadeCts?.Cancel();
+        _fadeCts = new CancellationTokenSource();
+        var ct = _fadeCts.Token;
+
+        Task.Run(async () =>
+        {
+            try
+            {
+                const int steps = 20;
+                const int delayMs = 15; // 300ms total
+
+                for (int i = steps; i >= 0; i--)
+                {
+                    if (ct.IsCancellationRequested) return;
+
+                    int currentLevel = (_dimmingLevel * i) / steps;
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (_hwnd != IntPtr.Zero && !ct.IsCancellationRequested)
+                            ApplyLayeredAttributes(_hwnd, currentLevel);
+                    });
+
+                    await Task.Delay(delayMs, ct);
+                }
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (!ct.IsCancellationRequested)
+                    {
+                        Hide();
+                        // Restore full alpha for next show
+                        if (_hwnd != IntPtr.Zero)
+                            ApplyLayeredAttributes(_hwnd, _dimmingLevel);
+                    }
+                });
+            }
+            catch (OperationCanceledException) { }
+        }, ct);
     }
 
     protected override void OnOpened(EventArgs e)
@@ -64,7 +142,7 @@ public partial class DimmingOverlayWindow : Window
         if (_hwnd == IntPtr.Zero) return;
 
         ApplyWin32Styles(_hwnd);
-        ApplyLayeredAttributes(_hwnd);
+        ApplyLayeredAttributes(_hwnd, _dimmingLevel);
 
         _active = true;
         _cts    = new CancellationTokenSource();
@@ -83,6 +161,7 @@ public partial class DimmingOverlayWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _cts?.Cancel();
+        _fadeCts?.Cancel();
         base.OnClosed(e);
     }
 
@@ -92,6 +171,16 @@ public partial class DimmingOverlayWindow : Window
     {
         var prevRects = new Dictionary<IntPtr, (int L, int T, int R, int B)>();
         int pvx = 0, pvy = 0, pvw = 0, pvh = 0;
+
+        // Create Virtual Desktop Manager once for the lifetime of the loop
+        NativeMethods.IVirtualDesktopManager? vdm = null;
+        try
+        {
+            var clsidVirtualDesktopManager = new Guid("AA509086-5CA9-4C25-8F95-589D3C07B48A");
+            vdm = (NativeMethods.IVirtualDesktopManager)Activator.CreateInstance(
+                Type.GetTypeFromCLSID(clsidVirtualDesktopManager)!)!;
+        }
+        catch { /* Virtual desktop API not available */ }
 
         while (!ct.IsCancellationRequested)
         {
@@ -113,7 +202,39 @@ public partial class DimmingOverlayWindow : Window
             lock (_excludedHandles)
                 handles = [.. _excludedHandles];
 
-            var handlesSet = new HashSet<IntPtr>(handles);
+            // Filter handles to only include those on the current virtual desktop
+            var currentDesktopHandles = new List<IntPtr>();
+            if (vdm is not null)
+            {
+                foreach (var h in handles)
+                {
+                    try
+                    {
+                        if (vdm.IsWindowOnCurrentVirtualDesktop(h, out bool onCurrentDesktop) == 0)
+                        {
+                            if (onCurrentDesktop)
+                                currentDesktopHandles.Add(h);
+                        }
+                        else
+                        {
+                            // If check fails, include it to be safe
+                            currentDesktopHandles.Add(h);
+                        }
+                    }
+                    catch
+                    {
+                        // If check fails, include it to be safe
+                        currentDesktopHandles.Add(h);
+                    }
+                }
+            }
+            else
+            {
+                // No VDM available, use all handles
+                currentDesktopHandles.AddRange(handles);
+            }
+
+            var handlesSet = new HashSet<IntPtr>(currentDesktopHandles);
             var cfgHwnd    = _configWindowHandle;
 
             // curRects tracks every HWND whose rect contributed to this frame
@@ -125,7 +246,7 @@ public partial class DimmingOverlayWindow : Window
             var focusCoverMap =
                 new Dictionary<IntPtr, List<(int L, int T, int R, int B)>>();
 
-            foreach (var h in handles)
+            foreach (var h in currentDesktopHandles)
             {
                 if (!NativeMethods.IsWindowVisible(h) || NativeMethods.IsIconic(h)) continue;
                 if (!NativeMethods.GetWindowRect(h, out var r) || r.Width <= 0 || r.Height <= 0) continue;
@@ -138,10 +259,14 @@ public partial class DimmingOverlayWindow : Window
                 var above  = NativeMethods.GetWindow(h, NativeMethods.GW_HWNDPREV);
                 while (above != IntPtr.Zero)
                 {
+                    var aboveWindowTitle = new StringBuilder(2);
+                    var aboveHasTitle = NativeMethods.GetWindowText(above, aboveWindowTitle, aboveWindowTitle.Capacity);
+                    
                     if (above != hwnd                              // skip our own overlay
                         && !handlesSet.Contains(above)            // skip other focus windows
                         && NativeMethods.IsWindowVisible(above)
                         && !NativeMethods.IsIconic(above)
+                        && aboveHasTitle > 0
                         && NativeMethods.GetWindowRect(above, out var ar)
                         && ar.Width > 0 && ar.Height > 0
                         && ar.Right > r.Left && ar.Left < r.Right // overlaps focus rect
@@ -294,9 +419,9 @@ public partial class DimmingOverlayWindow : Window
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
 
-    private void ApplyLayeredAttributes(IntPtr hwnd)
+    private void ApplyLayeredAttributes(IntPtr hwnd, int level)
     {
-        byte alpha = (byte)(_dimmingLevel / 100.0 * 255);
+        byte alpha = (byte)(level / 100.0 * 255);
         NativeMethods.SetLayeredWindowAttributes(hwnd, 0, alpha, NativeMethods.LWA_ALPHA);
     }
 }

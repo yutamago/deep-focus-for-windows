@@ -127,8 +127,8 @@ public partial class App : Application
         focus.FocusActiveChanged += (_, _) =>
             Dispatcher.UIThread.Post(() =>
             {
-                if (focus.IsFocusActive) dimming.Enable();
-                else                     dimming.Disable();
+                if (focus.IsFocusActive) dimming.Enable(minimizeNonFocusWindows: false);
+                else                     dimming.Disable(restoreNonFocusWindows: false);
             });
     }
 

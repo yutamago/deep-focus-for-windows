@@ -23,6 +23,7 @@ public partial class ConfigurationViewModel : ViewModelBase
     private readonly IDimmingService            _dimming;
     private readonly IStartupService            _startup;
     private readonly IFocusSessionService       _focusSession;
+    private bool _isLoadingSettings;
 
     public ConfigurationViewModel(
         ISettingsService          settings,
@@ -93,20 +94,23 @@ public partial class ConfigurationViewModel : ViewModelBase
     partial void OnDimmingLevelChanged(int value)
     {
         _dimming.DimmingLevel = value;
-        _ = SaveAsync();
+        if (!_isLoadingSettings)
+            _ = SaveAsync();
         TriggerSliderPreview();
     }
 
     partial void OnDimTaskbarChanged(bool value)
     {
         _dimming.DimTaskbar = value;
-        _ = SaveAsync();
+        if (!_isLoadingSettings)
+            _ = SaveAsync();
     }
 
     partial void OnStartOnBootChanged(bool value)
     {
         _startup.SetStartOnBoot(value);
-        _ = SaveAsync();
+        if (!_isLoadingSettings)
+            _ = SaveAsync();
     }
 
     partial void OnSearchTextChanged(string value)
@@ -335,10 +339,18 @@ public partial class ConfigurationViewModel : ViewModelBase
 
     private void LoadFromSettings()
     {
-        var s = _settings.Settings;
-        StartOnBoot  = s.StartOnBoot;
-        DimmingLevel = s.DimmingLevel;
-        DimTaskbar   = s.DimTaskbar;
+        _isLoadingSettings = true;
+        try
+        {
+            var s = _settings.Settings;
+            StartOnBoot  = s.StartOnBoot;
+            DimmingLevel = s.DimmingLevel;
+            DimTaskbar   = s.DimTaskbar;
+        }
+        finally
+        {
+            _isLoadingSettings = false;
+        }
     }
 
     private async Task SaveAsync()

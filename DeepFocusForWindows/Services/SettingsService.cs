@@ -46,5 +46,6 @@ public class SettingsService : ISettingsService
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await using var stream = File.Create(path);
         await JsonSerializer.SerializeAsync(stream, Settings, JsonOptions);
+        await stream.FlushAsync();
     }
 }
